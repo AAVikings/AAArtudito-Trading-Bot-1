@@ -1,12 +1,12 @@
 {
-  "name": "AACarol",
+  "name": "AAArtudito",
   "version": "1.0.0",
   "description": "Processes that get the order books from Poloniex.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "Luis-Fernando-Molina",
+  "author": "Matias-Benitez",
   "license": "ISC",
   "dependencies": {
     "azure-storage": "^2.6.0",

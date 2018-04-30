@@ -1,32 +1,24 @@
-﻿exports.newUserBot = function newUserBot(BOT, DEBUG_MODULE) {
-
-    const FULL_LOG = true;
-
+﻿var LRCIndicator = require('./LRCIndicator');
+exports.newUserBot = function newUserBot(BOT, DEBUG_MODULE, COMMONS_MODULE) {
     let bot = BOT;
 
-    const MODULE_NAME = "This.Bot";
+    const FULL_LOG = true;
+    const MODULE_NAME = "User Bot";
     const LOG_INFO = true;
-
     const logger = DEBUG_MODULE.newDebugLog();
     logger.fileName = MODULE_NAME;
     logger.bot = bot;
-
+    
     let thisObject = {
         initialize: initialize,
         start: start
     };
 
-    let platform;                           // You will receive a reference to the platform at your initialize function. 
+    let assistant;                           // You will receive a reference to the Traing Platform Advanced Algos Assistant at initialization.
 
     /*
-
-    The Platform object represents what the AA Platform provides you to help you with your bot. Inside it you can access to these inner objects:
-
-    platform = {
-        datasource: datasource,             // This one will provide you with pre-loaded data ready for you to consume. In this version candlesticks and stari patterns.
-        assistant: assistant,               // This one will help you to to create, and move positions at the exchange.
-        getPositions: getPositions          // Returns an array with the positions the bot have on the order book.
-                };
+    
+    The Traing Platform Advanced Algos Assistant object represents the implementation of the assistant that will allow to create and move positions on the exchange market.
 
     More details about these objects:
 
@@ -38,46 +30,47 @@
     };
 
     assistant = {
-        putPosition: putPosition,
-        movePosition: movePosition
+        putPosition: putPosition,           // To create a buy or sell position.
+        movePosition: movePosition          // To modify an existing position.
     };
 
     */
+    var fs = require('fs');
 
+    let oliviaStorage; // This is an example of dependency to other bots
+    let commons;
     return thisObject;
 
-    function initialize(pPlatform, callBackFunction) {
-
+    function initialize(pAssistant, callBackFunction) {
         try {
-
             if (LOG_INFO === true) { logger.write("[INFO] initialize -> Entering function."); }
 
             logger.fileName = MODULE_NAME;
+            commons = COMMONS_MODULE;
+            assistant = pAssistant;
 
-            /* Store local values. */
-            platform = pPlatform;
+            let key = "AAMasters-AAOlivia-Candles-Multi-Period-Daily-dataSet.V1";
 
-            logger.write("[INFO] initialize -> Entering function 'initialize' ");
-
+            oliviaStorage = assistant.dataDependencies.dataSets.get(key);
             callBackFunction(global.DEFAULT_OK_RESPONSE);
-
         } catch (err) {
             logger.write("[ERROR] initialize -> onDone -> err = " + err.message);
-            callBackFunction(global.DEFAULT_FAIL_RESPONSE);
+            callBackFunction(global.DEFAULT_RETRY_RESPONSE);
         }
     }
 
+    function pad(str, max) {
+        str = str.toString();
+        return str.length < max ? pad("0" + str, max) : str;
+    }
+
     function start(callBackFunction) {
-
         try {
-
             if (LOG_INFO === true) { logger.write("[INFO] start -> Entering function."); }
 
             /*
 
-            This is an example. This bot will trade with a pseudo strategy based on candle and volumes stairs patterns.
-            Essentially it will look at the patterns it is in at different time periods and try to make a guess if it is a good time to buy,
-            sell, or do nothing.
+            This trading bot will use an strategy based on the interpretation of the Linear Regression Curve Channel.
 
             */
 
@@ -85,203 +78,325 @@
 
             function onDone(err) {
                 try {
-
-                    switch (err.result) {
+                    switch (err.result) {                        
                         case global.DEFAULT_OK_RESPONSE.result: { 
                             logger.write("[INFO] start -> onDone -> Execution finished well. :-)");
                             callBackFunction(global.DEFAULT_OK_RESPONSE);
                             return;
                         }
-                            break;
                         case global.DEFAULT_RETRY_RESPONSE.result: {  // Something bad happened, but if we retry in a while it might go through the next time.
                             logger.write("[ERROR] start -> onDone -> Retry Later. Requesting Execution Retry.");
                             callBackFunction(global.DEFAULT_RETRY_RESPONSE);
                             return;
                         }
-                            break;
                         case global.DEFAULT_FAIL_RESPONSE.result: { // This is an unexpected exception that we do not know how to handle.
-                            logger.write("[ERROR] start -> onDone -> Operation Failed. Aborting the process.");
-                            callBackFunction(global.DEFAULT_FAIL_RESPONSE);
+                            logger.write("[ERROR] start -> onDone -> Operation Failed. Aborting the process. err = " + err.message);
+                            callBackFunction(global.DEFAULT_RETRY_RESPONSE);
                             return;
                         }
-                            break;
                     }
-
                 } catch (err) {
                     logger.write("[ERROR] start -> onDone -> err = " + err.message);
-                    callBackFunction(global.DEFAULT_FAIL_RESPONSE);
+                    callBackFunction(global.DEFAULT_RETRY_RESPONSE);
                 }
             }
 
             function businessLogic(callBack) {
-
                 try {
-
                     if (LOG_INFO === true) { logger.write("[INFO] start -> businessLogic -> Entering function."); }
 
-                    /*
+                    getChannelTilt(botDecision);
 
-                    First thing we need to know is to see where we are:
+                    function botDecision(err, channelTilt) {
+                        if (LOG_INFO === true) { logger.write("[INFO] start -> businessLogic -> botDecision  -> LRC Channel Tilt:" + channelTilt); }
 
-                    Do we have open positions?
-
-                    If not, shall we create one?
-                    If yes, shall we move them?
-
-                    As this is an example we can assume that we will have only one position, since we will be trading the whole allowed capital all at once.
-                    You dont need to do this, you can have as many positions as you wish, and you will find them all at the positions array used below.
-
-                    */
-
-                    let positions = platform.assistant.getPositions();
-
-                    if (positions.length > 0) {
-
-                        if (positions[0].type === "buy") {
-                            decideAboutBuyPosition(positions[0], callBack);
+                        if (err.result === global.DEFAULT_OK_RESPONSE.result) {
+                            processBotDecision(channelTilt);
                         } else {
-                            decideAboutSellPosition(positions[0], callBack);
+                            logger.write("[ERROR] start -> businessLogic -> err = " + err.message);
+                            callBack(global.DEFAULT_RETRY_RESPONSE);
                         }
-                        
-                    } else {
+                    }
 
-                        /*
+                    function processBotDecision(channelTilt) {
+                        let positions = assistant.getPositions();
+                        let assetABalance = assistant.getAvailableBalance().assetA;
+                        let assetBBalance = assistant.getAvailableBalance().assetB;
 
-                        Because this is an example, this bot is expected to always have an open position, either buy or sell.
-                        If it does not have one, that means that it is running for the first time. In which case, we will create one
-                        sell position at a very high price. Later, once the bot executes again, it will take it and move it to a reasonable
-                        place and monitor it during each execution round.
+                        if (channelTilt == 1 && assetABalance > 0) {
+                            createBuyPosition(callBack);
+                        } else if (channelTilt == -1 && assetBBalance > 0) {
+                            createSellPosition(callBack);
+                        } else {
+                            if (LOG_INFO === true) { logger.write("[INFO] start -> processBotDecision -> Nothing to do, there isn't a sell or buy oportunity."); }
+                        }
 
-                        Lets see first which is the current market rate.
-
-                        */
-
-                        let currentRate = platform.assistant.getMarketRate();
-
-                        /*
-                        As we just want to create the first order now and we do not want this order to get executed, we will put it at
-                        the +50% of current exchange rate. Next Bot execution will move it strategically.
-                        */
-
-                        let rate = currentRate * 1.50;
-
-                        /*
-                        The rules of the this first competition states that the bot will have the following initial balance in USDT and BTC to trade with.
-                        */
-
-                        const INITIAL_BALANCE_A = 0.0000;
-                        const INITIAL_BALANCE_B = 0.0001;
-
-                        let AmountA = INITIAL_BALANCE_A;
-                        let AmountB = INITIAL_BALANCE_B;
-
-                        /* 
-                        Here is this bot example, we are going to sell all AmountB at once. You can do this or whatever you think is better.
-                        */
-
-                        AmountA = AmountB * rate;
-
-                        platform.assistant.putPosition("sell", rate, AmountA, AmountB, callBack);
-
+                        callBack(global.DEFAULT_OK_RESPONSE);
                     }
                 } catch (err) {
                     logger.write("[ERROR] start -> businessLogic -> err = " + err.message);
-                    callBack(global.DEFAULT_FAIL_RESPONSE);
+                    callBack(global.DEFAULT_RETRY_RESPONSE);
                 }
             }
 
-            function decideAboutBuyPosition(pPosition, callBack) {
+            function createBuyPosition(callBack) {
+                if (LOG_INFO === true) { logger.write("[INFO] start -> createBuyPosition -> Entering function."); }
+                    
+                let currentRate = assistant.getMarketRate();
+                let amountA = assistant.getAvailableBalance().assetA;
+                let amountB = amountA / currentRate;
+                
+                assistant.putPosition("buy", currentRate, amountA, amountB, callBack);
 
-                try {
+                if (LOG_INFO === true) { logger.write("[INFO] start -> createBuyPosition -> Artuditu put a new BUY Position at rate: " + currentRate + ". Amount traded asset A: " + amountA + ". Amount traded asset B: " + amountB); }
 
-                    if (LOG_INFO === true) { logger.write("[INFO] start -> decideAboutBuyPosition -> Entering function."); }
+                fs.appendFile('./LRC_DATA.log', "BUY Position at rate: " + currentRate + ". Amount traded asset A: " + amountA + ". Amount traded asset B: " + amountB + "\n", function (err) {
+                    if (err) throw err;
+                });
+            }
+              
+            function createSellPosition(callBack) {
+                if (LOG_INFO === true) { logger.write("[INFO] start -> createSellPosition -> Entering function."); }
+                    
+                let currentRate = assistant.getMarketRate();
+                let amountB = assistant.getAvailableBalance().assetB;
+                let amountA = amountB * currentRate;
 
-                /* For simplicity of this example bot, we will use here the same logic than when we are selling. */
+                assistant.putPosition("sell", currentRate, amountA, amountB, callBack);
+                
+                if (LOG_INFO === true) { logger.write("[INFO] start -> createSellPosition -> Artuditu put a new SELL Position at rate: " + currentRate + ". Amount traded asset A: " + amountA + ". Amount traded asset B: " + amountB); }
 
-                    decideAboutSellPosition(pPosition, callBack);
-
-                } catch (err) {
-                    logger.write("[ERROR] start -> decideAboutBuyPosition -> err = " + err.message);
-                    callBack(global.DEFAULT_FAIL_RESPONSE);
-                }
+                fs.appendFile('./LRC_DATA.log', "SELL Position at rate: " + currentRate + ". Amount traded asset A: " + amountA + ". Amount traded asset B: " + amountB + "\n", function (err) {
+                    if (err) throw err;
+                });
             }
 
-            function decideAboutSellPosition(pPosition, callBack) {
+            function getChannelTilt(callBack) {
+                if (LOG_INFO === true) { logger.write("[INFO] start -> getChannelTilt -> Entering function."); }
 
-                try {
+                const CHANNEL_DOWN = -1;
+                const CHANNEL_UP = 1;
+                const NO_CHANNEL = 0;
+                const maxLRCDepth = 62; // 61 to be able to calculate current lrc60, plus one to calculate previous lrc60
+                const maxBackwardsCount = 60;
 
-                    if (LOG_INFO === true) { logger.write("[INFO] start -> decideAboutSellPosition -> Entering function."); }
+                let backwardsCount = 0;
+                let candleArray = [];
 
+                let queryDate = new Date(bot.processDatetime);
+                let candleFile = getDailyFile(queryDate, onDailyFileReceived);
+
+                function onDailyFileReceived(err, candleFile) {
+                    if (LOG_INFO === true) { logger.write("[INFO] start -> getChannelTilt -> onDailyFileReceived." ); }
+
+                    if (err.result === global.DEFAULT_OK_RESPONSE.result) {
+                        for (let i = 0; i < candleFile.length; i++) {
+                            let candle = {
+                                open: undefined,
+                                close: undefined,
+                                min: 10000000000000,
+                                max: 0,
+                                begin: undefined,
+                                end: undefined,
+                                direction: undefined
+                            };
+
+                            candle.min = candleFile[i][0];
+                            candle.max = candleFile[i][1];
+
+                            candle.open = candleFile[i][2];
+                            candle.close = candleFile[i][3];
+
+                            candle.begin = candleFile[i][4];
+                            candle.end = candleFile[i][5];
+
+                            if (candle.open > candle.close) { candle.direction = 'down'; }
+                            if (candle.open < candle.close) { candle.direction = 'up'; }
+                            if (candle.open === candle.close) { candle.direction = 'side'; }
+                            
+
+                            if (LOG_INFO === true) { logger.write("[INFO] Candle Date: " + new Date(candle.begin).toISOString() + ". Process Date: " + bot.processDatetime.toISOString()); }
+
+                            if (candleArray.length < maxLRCDepth && candle.begin <= bot.processDatetime.valueOf()) {
+                                candleArray.push(candleFile[i]);
+                            }
+                        }
+                        
+                        if (LOG_INFO === true) { logger.write("[INFO] start -> getChannelTilt -> Candle Array Length: " + candleArray.length); }
+
+                        if (candleArray.length >= maxLRCDepth) {
+                            if (LOG_INFO === true) { logger.write("[INFO] start -> getChannelTilt -> All candles available proceed with LRC calculations."); }
+
+                            performLRCCalculations(callBack);
+                        }else if (backwardsCount <= maxBackwardsCount) {
+                            if (LOG_INFO === true) { logger.write("[INFO] start -> getChannelTilt -> Getting file for day before."); }
+
+                            queryDate.setDate(queryDate.getDate() - 1);
+                            getDailyFile(queryDate, onDailyFileReceived);
+                            backwardsCount++;
+                        } else {
+                            logger.write("[ERROR] start -> getChannelTilt -> Not enough history to calculate LRC.");
+                            callBack(global.DEFAULT_RETRY_RESPONSE);
+                        }
+                    }
+                }
+
+                function performLRCCalculations(callBack){
                     /*
-    
-                    Here is where you decide what to do with your current sell position. Option are:
-    
-                    1. Do not touch it.
-                    2. Move it to another position by changing the rate.
-                        a. Up
-                        b. Down
-                    3. Cancell it. (not yet implemented at the platform.)
-    
-                    You can use here the information provided, analize it however you want and finally make a decition.
-    
+                    * It's needed to order since it's possible that we need to get another file and it will put an older candle at the end of the array.
                     */
+                    candleArray.sort(function (a, b) {
+                        return a[4] - b[4];
+                    });
 
-                    let candleArray;
-                    let candle;
-                    let weight;
+                    let lrcPoints = calculateLRC(candleArray);
 
-                    /*
-    
-                    Keeping in mind this is an example of traing bot, we are going to put some logic here that in the end will move the current position
-                    up or down. It will move it down if the bot feels it is time to sell, and up if it feels that selling is not a good idea.
-    
-                    To achieve a final rate to move the current position at the exchange, we are going to go through the available candles and patterns
-                    and each one is going to make a micro-move, and at the end we will have a final rate to send a move command to the exchange.
-    
-                    We will use a weight to give more or less importance to different Time Periods.
-    
-                    ------
-                    NOTE: The code below is an example and you should replace it by your own logic. This is the key of your intervention here. 
-                    ------
-                    */
+                    let lrc15 = lrcPoints.minimumChannelValue;
+                    let lrc30 = lrcPoints.middleChannelValue;
+                    let lrc60 = lrcPoints.maximumChannelValue;
 
-                    let diff;
-                    let variationPercentage;
-                    let timePeriodName;
+                    /**
+                        * We take the last candle (because it's the newest) and calculate the LRC points again to detect the tilt.
+                        */
+                    let previousCandleArray = candleArray.slice(0, candleArray.length - 1);
+                    let lrcPreviousPoints = calculateLRC(previousCandleArray);
 
-                    let targetRate = pPosition.rate;
+                    let previousLrc15 = lrcPreviousPoints.minimumChannelValue;
+                    let previousLrc30 = lrcPreviousPoints.middleChannelValue;
+                    let previousLrc60 = lrcPreviousPoints.maximumChannelValue;
+                    
 
-                    let weightArray = [1 / (24 * 60), 1 / (12 * 60), 1 / (8 * 60), 1 / (6 * 60), 1 / (4 * 60), 1 / (3 * 60), 1 / (2 * 60), 1 / (1 * 60)];
+                    let channelTilt = NO_CHANNEL;
+                    let ruleApplied = "";
 
-                    for (i = 0; i < global.marketFilesPeriods.length; i++) {
-
-                        weight = weightArray[i];
-
-                        timePeriodName = global.marketFilesPeriods[i][1];
-
-                        candleArray = platform.datasource.candlesMap.get(timePeriodName);
-                        candle = candleArray[candleArray.length - 1];           // The last candle of the 10 candles array.
-
-                        diff = candle.close - candle.open;
-                        variationPercentage = diff * 100 / candle.open;         // This is the % of how much the rate increased or decreced from open to close.
-
-                        targetRate = targetRate + targetRate * variationPercentage / 100 * weight;
-
+                    if (lrc60 < lrc30 && lrc15 > lrc30 && lrc30 < lrc15) {
+                        if (lrc15 > previousLrc15 && lrc30 > previousLrc30 && lrc60 > previousLrc60) {
+                            channelTilt = CHANNEL_UP; // The channel points UP
+                            ruleApplied += "Rule_1.";
+                        }
                     }
 
-                    /* Finally we move the order position to where we have just estimated is a better place. */
+                    if (lrc15 < lrc30 && lrc60 > lrc30 && lrc30 < lrc60) {
+                        if (lrc15 < previousLrc15 && lrc30 < previousLrc30 && lrc60 < previousLrc60) {
+                            channelTilt = CHANNEL_DOWN; // The channel points DOWN
+                            ruleApplied += "Rule_2.";
+                        }
+                    }
 
-                    platform.assistant.movePosition(pPosition, targetRate, callBack);
+                    if (lrc15 < previousLrc15 && lrc30 <= previousLrc30) {
+                        // 15 AND 30 changed direction from up to down
+                        channelTilt = CHANNEL_DOWN;
+                        ruleApplied += "Rule_3a.";
+                    }
 
-                } catch (err) {
-                    logger.write("[ERROR] start -> decideAboutSellPosition -> err = " + err.message);
-                    callBack(global.DEFAULT_FAIL_RESPONSE);
+                    if (lrc15 > previousLrc15 && lrc30 >= previousLrc30) {
+                        // 15 AND 30 changed direction from down to up
+                        channelTilt = CHANNEL_UP;
+                        ruleApplied += "Rule_3b.";
+                    }
+
+                    let logMessage = bot.processDatetime.toISOString() + "\t" + ruleApplied + "\t" + channelTilt + "\t" + lrc15 + "\t" + lrc30 + "\t" + lrc60 ;
+                    if (LOG_INFO === true) { logger.write("[INFO] start -> getChannelTilt -> performLRCCalculations -> Results: "+ logMessage); }
+                    
+                    fs.appendFile('./LRC_DATA.log', logMessage + "\t" + assistant.getMarketRate() + "\t" + assistant.getAvailableBalance().assetA + "\t" + assistant.getAvailableBalance().assetB + "\n", function (err) {
+                        if (err) throw err;
+                        console.log(bot.processDatetime.toISOString() + ' - LRC Data Saved. ');
+                    });
+
+                    callBack(global.DEFAULT_OK_RESPONSE, channelTilt);
                 }
             }
 
+            function getDailyFile(dateTime, onDailyFileReceived) {
+                try {
+                    if (FULL_LOG === true) { logger.write("[INFO] start -> getChannelTilt -> getDailyFile -> Entering function."); }
+
+                    //TODO Hardcoded parameters
+                    let periodTime = 1800000;
+                    let periodName = "30-min";
+
+                    let pFileName = MARKET.assetA + "_" + MARKET.assetB+ ".json";
+                    let pFilePath = "Candles/Multi-Period-Daily/";
+                    pFilePath += periodName;
+                    pFilePath += "/" + dateTime.getUTCFullYear();
+                    pFilePath += "/" + pad(dateTime.getUTCMonth() + 1, 2);
+                    pFilePath += "/" + pad(dateTime.getUTCDate(), 2);
+
+                    oliviaStorage.getTextFile(pFilePath, pFileName, onFileReceived);
+
+                    function onFileReceived(err, text) {
+                        if (err.result === global.DEFAULT_OK_RESPONSE.result) {
+                            if (FULL_LOG === true) { logger.write("[INFO] start -> getChannelTilt -> getDailyFile -> onFileReceived > Entering Function."); }
+
+                            let candleFile = JSON.parse(text);
+                            onDailyFileReceived(global.DEFAULT_OK_RESPONSE, candleFile);
+                        } else {
+                            logger.write("[ERROR] start -> getChannelTilt -> getDailyFile -> onFileReceived -> Failed to get the file. Will abort the process and request a retry.");
+                            callBackFunction(global.DEFAULT_RETRY_RESPONSE);
+                            return;
+                        }
+                    }                    
+                } catch (err) {
+                    logger.write("[ERROR] start -> getChannelTilt -> getDailyFile -> err = " + err.message);
+                    callBackFunction(global.DEFAULT_RETRY_RESPONSE);
+                }
+            }
+
+            function calculateLRC(candlesArray) {
+                if (LOG_INFO === true) { logger.write("[INFO] start -> getChannelTilt -> calculateLRC -> Entering function."); }
+                
+                let minimumChannelDepth = 15;
+                let middleChannelDepth = 30;
+                let maximumChannelDepth = 60;
+
+                let lrcPoints = {
+                    minimumChannelValue: 0,
+                    middleChannelValue: 0,
+                    maximumChannelValue: 0,
+                    lrcTimeBegin: 0
+                };
+
+                let lrcMinIndicator = new LRCIndicator(minimumChannelDepth);
+                let lrcMidIndicator = new LRCIndicator(middleChannelDepth);
+                let lrcMaxIndicator = new LRCIndicator(maximumChannelDepth);
+                let currentCandle = candlesArray[candlesArray.length - 1];
+
+                for (let i = 0; i < candlesArray.length; i++) {
+                    let tempCandle = candlesArray[i];
+                    let averagePrice = (tempCandle[0] + tempCandle[1] + tempCandle[2] + tempCandle[3]) / 4; // TODO Check which price should be take to get the LRC
+                    lrcMinIndicator.update(averagePrice);
+                    lrcMidIndicator.update(averagePrice);
+                    lrcMaxIndicator.update(averagePrice);
+                }
+                if (FULL_LOG === true) {
+                    logger.write("[INFO] start -> getChannelTilt -> calculateLRC -> candlesArray.length: " + candlesArray.length + ". lrcMinIndicator: " + lrcMinIndicator.age + ". lrcMidIndicator: "
+                        + lrcMidIndicator.age + ". lrcMaxIndicator: " + lrcMaxIndicator.age);
+                    
+                }
+
+                if (FULL_LOG === true) {
+                    logger.write("[INFO] start -> getChannelTilt -> calculateLRC -> Values: " + "lrcMinIndicator: " + lrcMinIndicator.result + ". lrcMidIndicator: "
+                        + lrcMidIndicator.result + ". lrcMaxIndicator: " + lrcMaxIndicator.result);
+                }
+
+                /*
+                 * Only if there is enough history the result will be calculated
+                 */
+                if (lrcMinIndicator.result != false && lrcMidIndicator.result != false && lrcMaxIndicator.result != false) {
+                    lrcPoints.minimumChannelValue = lrcMinIndicator.result;
+                    lrcPoints.middleChannelValue = lrcMidIndicator.result;
+                    lrcPoints.maximumChannelValue = lrcMaxIndicator.result;
+                    lrcPoints.lrcTimeBegin = currentCandle[4];
+
+                    return lrcPoints;
+                } else {
+                    logger.write("[ERROR] start -> getChannelTilt -> calculateLRC -> There is not enough history to calculate the LRC.");
+                    callBackFunction(global.DEFAULT_RETRY_RESPONSE);
+                }
+            }
         } catch (err) {
             logger.write("[ERROR] start -> err = " + err.message);
-            callBackFunction(global.DEFAULT_FAIL_RESPONSE);
+            callBackFunction(global.DEFAULT_RETRY_RESPONSE);
         }
     }
 };
